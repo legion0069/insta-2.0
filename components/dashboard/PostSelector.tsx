@@ -10,9 +10,9 @@ export interface InstagramMediaItem {
   id: string
   caption?: string
   media_type?: string
-  media_url?: string
-  thumbnail_url?: string
-  image_url?: string
+  media_url?: string | null
+  thumbnail_url?: string | null
+  image_url?: string | null
   permalink?: string
   timestamp?: string
 }

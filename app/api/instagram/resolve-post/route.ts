@@ -3,12 +3,12 @@ import { getSupabaseServerClient } from "@/lib/supabase-server"
 
 function shortcodeToId(shortcode: string): string {
   try {
-    let id = 0n
+    let id = BigInt(0)
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
     for (let i = 0; i < shortcode.length; i++) {
       const idx = alphabet.indexOf(shortcode[i])
       if (idx === -1) return shortcode
-      id = id * 64n + BigInt(idx)
+      id = id * BigInt(64) + BigInt(idx)
     }
     return id.toString()
   } catch {
