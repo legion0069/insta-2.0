@@ -1,11 +1,16 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { Loader2 } from "lucide-react"
+import { Loader2, Plus, Trash2 } from "lucide-react"
 import type { Automation } from "@/lib/types"
 import { PostSelector, InstagramMediaItem } from "@/components/dashboard/PostSelector"
 
 type Source = Automation["trigger_source"]
+
+interface CardButton {
+  title: string
+  url: string
+}
 
 export function QuickAutomationForm({ userId, initialSource = "comment", onSuccess }: {
   userId: string
@@ -18,8 +23,9 @@ export function QuickAutomationForm({ userId, initialSource = "comment", onSucce
   const [answer, setAnswer] = useState("")
   const [useButtonCard, setUseButtonCard] = useState(false)
   const [cardTitle, setCardTitle] = useState("Job Links & Information")
-  const [buttonTitle, setButtonTitle] = useState("🔗 View Job Links")
-  const [buttonUrl, setButtonUrl] = useState("")
+  const [cardButtons, setCardButtons] = useState<CardButton[]>([
+    { title: "🔗 View Job Links", url: "" },
+  ])
   const [checkFollow, setCheckFollow] = useState(false)
   const [replyPublicly, setReplyPublicly] = useState(true)
   const [publicReplyText, setPublicReplyText] = useState("Check your DMs! 📥")
@@ -28,6 +34,22 @@ export function QuickAutomationForm({ userId, initialSource = "comment", onSucce
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const submitting = useRef(false)
+
+  const addButton = () => {
+    if (cardButtons.length < 3) {
+      setCardButtons(prev => [...prev, { title: "", url: "" }])
+    }
+  }
+
+  const removeButton = (index: number) => {
+    if (cardButtons.length > 1) {
+      setCardButtons(prev => prev.filter((_, i) => i !== index))
+    }
+  }
+
+  const updateButton = (index: number, field: keyof CardButton, value: string) => {
+    setCardButtons(prev => prev.map((btn, i) => i === index ? { ...btn, [field]: value } : btn))
+  }
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -51,17 +73,19 @@ export function QuickAutomationForm({ userId, initialSource = "comment", onSucce
       public_replies: replyPublicly && publicReplyText.trim() ? [publicReplyText.trim()] : ["Check your DMs! 📥"],
     }
 
-    if (useButtonCard && buttonUrl.trim()) {
+    const validButtons = cardButtons
+      .map(b => ({
+        type: "web_url",
+        title: b.title.trim() || "🔗 Open Link",
+        url: b.url.trim(),
+      }))
+      .filter(b => Boolean(b.url))
+
+    if (useButtonCard && validButtons.length > 0) {
       contentPayload.card = {
         title: cardTitle.trim() || "Here is your link",
-        subtitle: answer.trim() || "Tap the button below to view and apply:",
-        buttons: [
-          {
-            type: "web_url",
-            title: buttonTitle.trim() || "🔗 Open Link",
-            url: buttonUrl.trim(),
-          },
-        ],
+        subtitle: answer.trim() || "Tap below to view and apply:",
+        buttons: validButtons,
       }
     }
 
@@ -240,52 +264,100 @@ export function QuickAutomationForm({ userId, initialSource = "comment", onSucce
             </div>
 
             {useButtonCard && (
-              <div className="rounded-xl border border-border/80 bg-muted/20 p-3.5 space-y-3 animate-in fade-in-50 duration-150">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="block">
-                    <span className="text-[11px] font-medium text-muted-foreground">Card Title</span>
-                    <input
-                      type="text"
-                      value={cardTitle}
-                      onChange={e => setCardTitle(e.target.value)}
-                      placeholder="e.g. Job Links & Application"
-                      className="mt-1 w-full text-xs bg-card border border-border rounded-md px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-[11px] font-medium text-muted-foreground">Button Text</span>
-                    <input
-                      type="text"
-                      value={buttonTitle}
-                      onChange={e => setButtonTitle(e.target.value)}
-                      placeholder="e.g. 🔗 View Job Links"
-                      className="mt-1 w-full text-xs bg-card border border-border rounded-md px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    />
-                  </label>
-                </div>
-
+              <div className="rounded-xl border border-border/80 bg-muted/20 p-3.5 space-y-3.5 animate-in fade-in-50 duration-150">
                 <label className="block">
-                  <span className="text-[11px] font-medium text-muted-foreground">Destination URL</span>
+                  <span className="text-[11px] font-medium text-muted-foreground">Card Title</span>
                   <input
-                    required={useButtonCard}
-                    type="url"
-                    value={buttonUrl}
-                    onChange={e => setButtonUrl(e.target.value)}
-                    placeholder="https://vamshi.is-a.dev/?view=jobs"
-                    className="mt-1 w-full text-xs bg-card border border-border rounded-md px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+                    type="text"
+                    value={cardTitle}
+                    onChange={e => setCardTitle(e.target.value)}
+                    placeholder="e.g. Job Links & Information"
+                    className="mt-1 w-full text-xs bg-card border border-border rounded-md px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                   />
                 </label>
+
+                {/* Multiple Card Buttons */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
+                      <span>Card Buttons / Links</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">({cardButtons.length}/3)</span>
+                    </span>
+                    {cardButtons.length < 3 && (
+                      <button
+                        type="button"
+                        onClick={addButton}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:opacity-85 transition-opacity cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add another link
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {cardButtons.map((btn, idx) => (
+                      <div key={idx} className="rounded-lg border border-border/80 bg-card p-2.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                            Button #{idx + 1}
+                          </span>
+                          {cardButtons.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeButton(idx)}
+                              className="text-muted-foreground hover:text-destructive transition-colors p-0.5 rounded cursor-pointer"
+                              title="Remove button"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <label className="block">
+                            <span className="text-[10px] font-medium text-muted-foreground">Button Text</span>
+                            <input
+                              type="text"
+                              value={btn.title}
+                              onChange={e => updateButton(idx, "title", e.target.value)}
+                              placeholder={idx === 0 ? "e.g. 🔗 View Job Links" : idx === 1 ? "e.g. 📄 Application Form" : "e.g. 💬 Join Community"}
+                              className="mt-1 w-full text-xs bg-muted/30 border border-border rounded-md px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-[10px] font-medium text-muted-foreground">Destination URL</span>
+                            <input
+                              required={useButtonCard && idx === 0}
+                              type="url"
+                              value={btn.url}
+                              onChange={e => updateButton(idx, "url", e.target.value)}
+                              placeholder="https://..."
+                              className="mt-1 w-full text-xs bg-muted/30 border border-border rounded-md px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Live Preview */}
                 <div className="mt-2 pt-2.5 border-t border-border">
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-2">
                     Instagram In-App Preview
                   </span>
-                  <div className="max-w-xs mx-auto rounded-xl border border-border bg-card p-3 shadow-xs text-center">
-                    <p className="text-xs font-semibold text-foreground truncate">{cardTitle || "Job Links & Application"}</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{answer || "Tap below to view and apply:"}</p>
-                    <div className="mt-2.5 w-full rounded-lg bg-primary/10 border border-primary/20 py-1.5 text-xs font-semibold text-primary flex items-center justify-center gap-1.5 shadow-2xs">
-                      <span>{buttonTitle || "🔗 View Job Links"}</span>
+                  <div className="max-w-xs mx-auto rounded-xl border border-border bg-card p-3 shadow-xs text-center space-y-2">
+                    <div>
+                      <p className="text-xs font-semibold text-foreground truncate">{cardTitle || "Job Links & Information"}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{answer || "Tap below to view and apply:"}</p>
+                    </div>
+                    <div className="space-y-1.5 pt-1">
+                      {cardButtons.map((btn, idx) => (
+                        <div key={idx} className="w-full rounded-lg bg-primary/10 border border-primary/20 py-1.5 text-xs font-semibold text-primary flex items-center justify-center gap-1.5 shadow-2xs">
+                          <span className="truncate">{btn.title || `🔗 Link #${idx + 1}`}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -307,7 +379,7 @@ export function QuickAutomationForm({ userId, initialSource = "comment", onSucce
                 <span>🔒 Only send if they follow you (Follow-Gate)</span>
               </span>
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                If they don't follow @vamshi__verse, they are prompted to follow to unlock the link.
+                If they don't follow your account, they are prompted to follow to unlock the link.
               </p>
             </label>
           </div>
