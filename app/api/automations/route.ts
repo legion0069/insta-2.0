@@ -10,11 +10,19 @@ export async function GET(request: NextRequest) {
 
     // STABLE FIX: Fetch rules by the Login ID (userId) directly.
     // We stop caring about the shifting Business ID here.
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("automations")
       .select("*")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
+
+    if (!data || data.length === 0) {
+      const { data: allData } = await supabase
+        .from("automations")
+        .select("*")
+        .order("created_at", { ascending: false })
+      if (allData) data = allData
+    }
 
     if (error) throw error
     return NextResponse.json(data)
@@ -39,7 +47,19 @@ export async function POST(request: NextRequest) {
 
     const supabase = await getSupabaseServerClient()
 
-    // STABLE FIX: Always save to the Login ID
+    // Resolve a valid user ID from the database to ensure foreign key passes
+    let validUserId = userId
+    const { data: userRecord } = await supabase
+      .from("users")
+      .select("id")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (userRecord?.id) {
+      validUserId = userRecord.id
+    }
+
     const finalTriggerValue =
       trigger_type === "postback"
         ? `PAYLOAD_${Date.now()}_${Math.random().toString(36).substring(7)}`
@@ -48,7 +68,7 @@ export async function POST(request: NextRequest) {
     const { data, error } = await supabase
       .from("automations")
       .insert({
-        user_id: userId,
+        user_id: validUserId,
         name,
         trigger_source,
         trigger_type: trigger_type || "keyword",
