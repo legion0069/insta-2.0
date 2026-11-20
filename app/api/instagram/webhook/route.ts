@@ -316,6 +316,10 @@ export async function POST(request: NextRequest) {
         continue
       }
 
+      if (process.env.INSTAGRAM_ACCESS_TOKEN) {
+        user.access_token = process.env.INSTAGRAM_ACCESS_TOKEN
+      }
+
       let { data: automations } = await supabase
         .from("automations")
         .select("*")

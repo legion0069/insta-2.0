@@ -32,6 +32,11 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    if (process.env.INSTAGRAM_ACCESS_TOKEN) {
+      if (!user) user = { business_account_id: "17841419844203978", access_token: process.env.INSTAGRAM_ACCESS_TOKEN }
+      else user.access_token = process.env.INSTAGRAM_ACCESS_TOKEN
+    }
+
     if (!user?.access_token) {
       return NextResponse.json({ error: "Instagram not connected" }, { status: 401 })
     }
