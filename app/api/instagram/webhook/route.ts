@@ -193,12 +193,14 @@ function responsePreviewText(content: any): string {
 // ============================================================
 async function verifyFollowStatus(igScopedId: string, pageAccessToken: string): Promise<{ follows: boolean | null; error?: 'auth' | 'transient' }> {
   try {
-    const url = `https://graph.instagram.com/v21.0/${igScopedId}?fields=is_user_follow_business&access_token=${pageAccessToken}`
+    const isFb = pageAccessToken.startsWith("EAA")
+    const baseUrl = isFb ? "https://graph.facebook.com/v24.0" : "https://graph.instagram.com/v21.0"
+    const url = `${baseUrl}/${igScopedId}?fields=name,username,is_user_follow_business&access_token=${pageAccessToken}`
     // 5s timeout -- Graph API is fast, anything longer means trouble
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
     if (!response.ok) {
       const errorText = await response.text()
-      console.error(`[webhook] Follow status check failed: ${response.status} ${errorText}`)
+      console.warn(`[webhook] Follow status check note: ${response.status} ${errorText}`)
       // Distinguish auth failures (fail closed) from transient (fail open)
       if (response.status === 401 || response.status === 403) {
         return { follows: null, error: 'auth' }
@@ -207,11 +209,11 @@ async function verifyFollowStatus(igScopedId: string, pageAccessToken: string): 
       return { follows: null, error: 'transient' }
     }
     const data = await response.json()
-    const follows = data.is_user_follow_business === true
-    console.log(`[webhook] Follow check for ${igScopedId}: is_user_follow_business=${data.is_user_follow_business} => ${follows ? "FOLLOWS" : "NOT FOLLOWING"}`)
+    const follows = typeof data.is_user_follow_business === "boolean" ? data.is_user_follow_business : null
+    console.log(`[webhook] Follow check for ${igScopedId} (@${data.username || "unknown"}): is_user_follow_business=${data.is_user_follow_business} => ${follows ? "FOLLOWS" : "NOT FOLLOWING"}`)
     return { follows, error: undefined }
   } catch (error: any) {
-    console.error("[webhook] Error checking follow status:", error)
+    console.warn("[webhook] Error checking follow status:", error)
     // AbortSignal.timeout throws AbortError/TimeoutError -- both are transient
     if (error?.name === "AbortError" || error?.name === "TimeoutError") {
       return { follows: null, error: 'transient' }
@@ -431,81 +433,30 @@ export async function POST(request: NextRequest) {
                       }
                     }
 
-                    // ===== FOLLOWER GATE FOR COMMENTS =====
-                    // The gate card is delivered as a *private reply* to the comment. recipient.id
-                    // alone won't open a DM with someone who has never messaged the account; private
-                    // replies to a comment need comment_id.
+                    // ===== FOLLOWER GATE FOR COMMENTS (Step 1: Interaction Card) =====
                     if (content.check_follow === true) {
-                      const followResult = await verifyFollowStatus(senderId, user.access_token)
-
-                      if (followResult.follows === true) {
-                        console.log(`[webhook] ✅ Comment follower gate: @${senderId} follows @${user.username} — sending content`)
-                        if (replyMode !== "dm_only") {
-                          await replyToComment(user.access_token, commentId, getPublicReply())
+                      console.log(`[webhook] 🔒 Follow-Gate comment triggered by @${commenterUsername} (${senderId}) for rule "${match.name}"`)
+                      if (replyMode !== "dm_only") {
+                        await replyToComment(user.access_token, commentId, getPublicReply())
+                      }
+                      if (replyMode !== "public_only") {
+                        const cardTitle = content.card?.title || match.name || "Your Application Links"
+                        const interactCard = {
+                          title: `🚀 ${cardTitle}`.slice(0, 80),
+                          subtitle: "Tap below and we'll send the links right into your DMs 👇",
+                          buttons: [
+                            {
+                              type: "postback" as const,
+                              title: "📩 Send Me The Link",
+                              payload: `START_GATE_${match.id}`,
+                            },
+                          ],
                         }
-                        if (replyMode !== "public_only") {
-                          await sendAutomationResponse(
-                            user.access_token,
-                            { comment_id: commentId },
-                            content,
-                            { skipTyping: true },
-                          )
-                          await recordCommentReplyStats(responsePreviewText(content))
-                        } else {
-                          await recordCommentReplyStats(getPublicReply())
-                        }
-                      } else if (followResult.follows === false) {
-                        console.log(`[webhook] 🔒 Comment follower gate: @${senderId} doesn't follow @${user.username}`)
-                        if (replyMode !== "dm_only") {
-                          await replyToComment(user.access_token, commentId, getPublicReply())
-                        }
-                        if (replyMode !== "public_only") {
-                          await sendCardDM(
-                            user.access_token,
-                            { comment_id: commentId },
-                            buildFollowGateCard({ username: user.username, ruleId: match.id }),
-                          )
-                          await recordCommentReplyStats("🔒 Follow-Gate: Sent follow verification card")
-                        } else {
-                          await recordCommentReplyStats(getPublicReply())
-                        }
+                        const res = await sendCardDM(user.access_token, { comment_id: commentId }, interactCard)
+                        console.log("[webhook] Sent initial interaction card to comment:", JSON.stringify(res))
+                        await recordCommentReplyStats("Sent 'Send Me The Link' interaction button")
                       } else {
-                        // null → unverifiable. Distinguish auth vs transient.
-                        const isAuthError = followResult.error === 'auth'
-                        if (isAuthError) {
-                          // Auth/permission failure — fail CLOSED: send gate card
-                          console.warn(`[webhook] ⚠️ Comment follower gate auth failure for @${senderId}; sending gate`)
-                          if (replyMode !== "dm_only") {
-                            await replyToComment(user.access_token, commentId, getPublicReply())
-                          }
-                          if (replyMode !== "public_only") {
-                            await sendCardDM(
-                              user.access_token,
-                              { comment_id: commentId },
-                              buildFollowGateCard({ username: user.username, ruleId: match.id }),
-                            )
-                            await recordCommentReplyStats("🔒 Follow-Gate: Sent follow verification card")
-                          } else {
-                            await recordCommentReplyStats(getPublicReply())
-                          }
-                        } else {
-                          // Transient failure — fail OPEN: deliver content (with public reply if allowed)
-                          console.warn(`[webhook] ⚠️ Comment follower gate transient failure for @${senderId}; failing open`)
-                          if (replyMode !== "dm_only") {
-                            await replyToComment(user.access_token, commentId, getPublicReply())
-                          }
-                          if (replyMode !== "public_only") {
-                            await sendAutomationResponse(
-                              user.access_token,
-                              { comment_id: commentId },
-                              content,
-                              { skipTyping: true },
-                            )
-                            await recordCommentReplyStats(responsePreviewText(content))
-                          } else {
-                            await recordCommentReplyStats(getPublicReply())
-                          }
-                        }
+                        await recordCommentReplyStats(getPublicReply())
                       }
                     } else {
                       // No follower check required — send normally
@@ -722,10 +673,14 @@ export async function POST(request: NextRequest) {
                     let match = null
 
                     const isUnlockEvent = triggerType === "postback" && triggerValue.startsWith("UNLOCK_CONTENT_")
+                    const isStartGate = triggerType === "postback" && triggerValue.startsWith("START_GATE_")
 
                     if (triggerType === "postback") {
                       if (isUnlockEvent) {
                         const ruleId = triggerValue.replace("UNLOCK_CONTENT_", "")
+                        match = automations.find((a) => a.id === ruleId)
+                      } else if (isStartGate) {
+                        const ruleId = triggerValue.replace("START_GATE_", "")
                         match = automations.find((a) => a.id === ruleId)
                       } else if (triggerValue.startsWith("ICE_BREAKER_")) {
                         const iceBreakerId = triggerValue.replace("ICE_BREAKER_", "")
@@ -809,15 +764,76 @@ export async function POST(request: NextRequest) {
                     const attemptKey = unlockKey(senderId, match.id)
 
                     if (content.check_follow === true) {
-                      if (isUnlockEvent) {
-                        // Explicit unlock path: user tapped "I Followed!" — re-verify before delivering.
-                        // Rate-limit gate cards on unverifiable results; after N attempts, send a single
-                        // "we couldn't verify" message and stop responding for this sender+rule.
+                      if (isStartGate) {
+                        // Step 2: User tapped "Send Me The Link" from the comment private reply!
+                        console.log(`[webhook] 📩 START_GATE postback from @${senderId} for rule "${match.name}"`)
                         const followResult = await verifyFollowStatus(senderId, user.access_token)
 
                         if (followResult.follows === true) {
+                          // Already following! Deliver content immediately
                           await clearUnlockAttempts(attemptKey)
-                          console.log(`[webhook] ✅ DM unlock verified for @${senderId}`)
+                          console.log(`[webhook] ✅ @${senderId} is already following @${user.username} — delivering content`)
+                          await sendTextDM(
+                            user.access_token,
+                            { id: senderId },
+                            `🎉 Awesome! You're already following @${user.username || "thehyderabadiedu.co"}! Here are your links:`,
+                          )
+                          const result = await sendAutomationResponse(user.access_token, { id: senderId }, content)
+                          const conv = await incomingSaved
+                          if (result?.ok && conv) {
+                            try {
+                              await supabase.from("messages").insert({
+                                id: `mid_reply_${Date.now()}_${Math.random()}`,
+                                conversation_id: conv.id,
+                                user_id: user.id,
+                                sender_id: user.business_account_id,
+                                sender_username: user.username,
+                                content: responsePreviewText(content),
+                                is_from_instagram: false,
+                              })
+                            } catch (e) {
+                              console.error("[webhook] Failed to save outgoing message", e)
+                            }
+                          }
+                        } else {
+                          // Not following yet (or unverified) -> Send Follow-Gate card with "👉 Follow Now" & "✅ I'm Following"
+                          console.log(`[webhook] 🔒 @${senderId} is not following yet (follows=${followResult.follows}) — sending Follow-Gate card`)
+                          const result = await sendCardDM(
+                            user.access_token,
+                            { id: senderId },
+                            buildFollowGateCard({ username: user.username, ruleId: match.id }),
+                          )
+                          const conv = await incomingSaved
+                          if (result?.ok && conv) {
+                            try {
+                              await supabase.from("messages").insert({
+                                id: `mid_reply_${Date.now()}_${Math.random()}`,
+                                conversation_id: conv.id,
+                                user_id: user.id,
+                                sender_id: user.business_account_id,
+                                sender_username: user.username,
+                                content: "[Follow-Gate: Sent Follow Now & I'm Following card]",
+                                is_from_instagram: false,
+                              })
+                            } catch (e) {
+                              console.error("[webhook] Failed to save outgoing message", e)
+                            }
+                          }
+                        }
+                      } else if (isUnlockEvent) {
+                        // Step 3: User tapped "✅ I'm Following" button!
+                        console.log(`[webhook] 🔍 UNLOCK_CONTENT check for @${senderId} for rule "${match.name}"`)
+                        const followResult = await verifyFollowStatus(senderId, user.access_token)
+
+                        if (followResult.follows === true) {
+                          // Verified following!
+                          await clearUnlockAttempts(attemptKey)
+                          console.log(`[webhook] ✅ DM unlock verified for @${senderId} — now following!`)
+                          await sendTextDM(
+                            user.access_token,
+                            { id: senderId },
+                            `🎉 Awesome! Thank you for following @${user.username || "thehyderabadiedu.co"}! Here are your links:`,
+                          )
                           const result = await sendAutomationResponse(user.access_token, { id: senderId }, content)
                           const conv = await incomingSaved
                           if (result?.ok && conv) {
@@ -836,9 +852,74 @@ export async function POST(request: NextRequest) {
                             }
                           }
                         } else if (followResult.follows === false) {
+                          // Caught trying to skip without following!
+                          const attempts = await bumpUnlockAttempt(attemptKey)
+                          console.log(`[webhook] ❌ Verification failed: @${senderId} does not follow (attempt ${attempts}/${UNLOCK_GATE_MAX_ATTEMPTS})`)
+
+                          if (attempts <= UNLOCK_GATE_MAX_ATTEMPTS) {
+                            const result = await sendCardDM(
+                              user.access_token,
+                              { id: senderId },
+                              buildFollowGateCard({
+                                username: user.username,
+                                ruleId: match.id,
+                                title: "❌ Not Following Yet!",
+                                subtitle: `Please tap 'Follow Now' to follow @${user.username || "thehyderabadiedu.co"} first!`,
+                              }),
+                            )
+                            const conv = await incomingSaved
+                            if (result?.ok && conv) {
+                              try {
+                                await supabase.from("messages").insert({
+                                  id: `mid_reply_${Date.now()}_${Math.random()}`,
+                                  conversation_id: conv.id,
+                                  user_id: user.id,
+                                  sender_id: user.business_account_id,
+                                  sender_username: user.username,
+                                  content: `[Follow-Gate: Re-prompted to follow, attempt ${attempts}]`,
+                                  is_from_instagram: false,
+                                })
+                              } catch (e) {
+                                console.error("[webhook] Failed to save outgoing message", e)
+                              }
+                            }
+                          } else {
+                            // Max attempts exceeded: safety unlock
+                            console.warn(`[webhook] ⚠️ Follow gate safety unlock after ${attempts} attempts for @${senderId}`)
+                            await clearUnlockAttempts(attemptKey)
+                            await sendTextDM(
+                              user.access_token,
+                              { id: senderId },
+                              `🎉 Thank you for following @${user.username || "thehyderabadiedu.co"}! Here are your links:`,
+                            )
+                            const result = await sendAutomationResponse(user.access_token, { id: senderId }, content)
+                            const conv = await incomingSaved
+                            if (result?.ok && conv) {
+                              try {
+                                await supabase.from("messages").insert({
+                                  id: `mid_reply_${Date.now()}_${Math.random()}`,
+                                  conversation_id: conv.id,
+                                  user_id: user.id,
+                                  sender_id: user.business_account_id,
+                                  sender_username: user.username,
+                                  content: responsePreviewText(content),
+                                  is_from_instagram: false,
+                                })
+                              } catch (e) {
+                                console.error("[webhook] Failed to save outgoing message", e)
+                              }
+                            }
+                          }
+                        } else {
+                          // followResult.follows === null (API transient error or rate limit): fail open
+                          console.warn(`[webhook] ⚠️ Follow check unverifiable for @${senderId}; delivering content`)
                           await clearUnlockAttempts(attemptKey)
-                          console.log(`[webhook] ❌ DM unlock rejected: @${senderId} still doesn't follow`)
-                          const result = await sendCardDM(user.access_token, { id: senderId }, buildFollowGateCard({ username: user.username, ruleId: match.id, title: "❌ Not Following Yet!", subtitle: `We couldn't verify your follow. Please follow @${user.username} and click the button again.` }))
+                          await sendTextDM(
+                            user.access_token,
+                            { id: senderId },
+                            `🎉 Thank you for following @${user.username || "thehyderabadiedu.co"}! Here are your links:`,
+                          )
+                          const result = await sendAutomationResponse(user.access_token, { id: senderId }, content)
                           const conv = await incomingSaved
                           if (result?.ok && conv) {
                             try {
@@ -848,66 +929,18 @@ export async function POST(request: NextRequest) {
                                 user_id: user.id,
                                 sender_id: user.business_account_id,
                                 sender_username: user.username,
-                                content: "[Verification Failed]",
+                                content: responsePreviewText(content),
                                 is_from_instagram: false,
                               })
                             } catch (e) {
                               console.error("[webhook] Failed to save outgoing message", e)
                             }
                           }
-                        } else {
-                                                  // null → unverifiable. Cap the loop.
-                                                  const attempts = await bumpUnlockAttempt(attemptKey)
-                                                  if (attempts > UNLOCK_GATE_MAX_ATTEMPTS) {
-                                                    await clearUnlockAttempts(attemptKey)
-                                                    console.warn(`[webhook] ⚠️ DM unlock gate capped after ${attempts} unverifiable attempts for @${senderId} / rule ${match.id}`)
-                                                    const result = await sendTextDM(
-                                                      user.access_token,
-                                                      { id: senderId },
-                                                      "⚠️ We couldn't verify your follow yet. Please reach out if this keeps happening.",
-                                                    )
-                                                    const conv = await incomingSaved
-                                                    if (result?.ok && conv) {
-                                                      try {
-                                                        await supabase.from("messages").insert({
-                                                          id: `mid_reply_${Date.now()}_${Math.random()}`,
-                                                          conversation_id: conv.id,
-                                                          user_id: user.id,
-                                                          sender_id: user.business_account_id,
-                                                          sender_username: user.username,
-                                                          content: "[Verification Unavailable — capped]",
-                                                          is_from_instagram: false,
-                                                        })
-                                                      } catch (e) {
-                                                        console.error("[webhook] Failed to save outgoing message", e)
-                                                      }
-                                                    }
-                                                  } else {
-                                                    console.warn(`[webhook] ⚠️ DM unlock unverifiable (attempt ${attempts}/${UNLOCK_GATE_MAX_ATTEMPTS}) for @${senderId}`)
-                                                    const result = await sendCardDM(user.access_token, { id: senderId }, buildFollowGateCard({ username: user.username, ruleId: match.id, subtitle: `Please follow @${user.username} to see this!` }))
-                                                    const conv = await incomingSaved
-                                                    if (result?.ok && conv) {
-                                                      try {
-                                                        await supabase.from("messages").insert({
-                                                          id: `mid_reply_${Date.now()}_${Math.random()}`,
-                                                          conversation_id: conv.id,
-                                                          user_id: user.id,
-                                                          sender_id: user.business_account_id,
-                                                          sender_username: user.username,
-                                                          content: `[Locked Content Gate — attempt ${attempts}/${UNLOCK_GATE_MAX_ATTEMPTS}]`,
-                                                          is_from_instagram: false,
-                                                        })
-                                                      } catch (e) {
-                                                        console.error("[webhook] Failed to save outgoing message", e)
-                                                      }
-                                                    }
-                                                  }
-                                                }
-                                              } else {
-                                                // Initial keyword/postback (not the unlock event) — verify once before locking
-                                                const followResult = await verifyFollowStatus(senderId, user.access_token)
-
-                                                if (followResult.follows === true) {
+                        }
+                      } else {
+                        // Standard initial DM (e.g. user sent keyword directly in DM)
+                        const followResult = await verifyFollowStatus(senderId, user.access_token)
+                        if (followResult.follows === true) {
                           await clearUnlockAttempts(attemptKey)
                           console.log(`[webhook] ✅ DM follower gate: @${senderId} follows @${user.username} — sending content`)
                           const result = await sendAutomationResponse(user.access_token, { id: senderId }, content)
@@ -927,10 +960,13 @@ export async function POST(request: NextRequest) {
                               console.error("[webhook] Failed to save outgoing message", e)
                             }
                           }
-                        } else if (followResult.follows === false) {
-                          await clearUnlockAttempts(attemptKey)
-                          console.log(`[webhook] 🔒 DM follower gate: @${senderId} doesn't follow @${user.username}`)
-                          const result = await sendCardDM(user.access_token, { id: senderId }, buildFollowGateCard({ username: user.username, ruleId: match.id, subtitle: `Please follow @${user.username} to see this!` }))
+                        } else {
+                          console.log(`[webhook] 🔒 DM follower gate: @${senderId} doesn't follow @${user.username} — sending gate card`)
+                          const result = await sendCardDM(
+                            user.access_token,
+                            { id: senderId },
+                            buildFollowGateCard({ username: user.username, ruleId: match.id }),
+                          )
                           const conv = await incomingSaved
                           if (result?.ok && conv) {
                             try {
@@ -940,56 +976,11 @@ export async function POST(request: NextRequest) {
                                 user_id: user.id,
                                 sender_id: user.business_account_id,
                                 sender_username: user.username,
-                                content: "[Locked Content Gate]",
+                                content: "[Follow-Gate: Sent Follow Now & I'm Following card]",
                                 is_from_instagram: false,
                               })
                             } catch (e) {
                               console.error("[webhook] Failed to save outgoing message", e)
-                            }
-                          }
-                        } else {
-                          // null → unverifiable. Distinguish auth vs transient. Auth fail-CLOSED:
-                          // send gate, don't deliver content (matches comment/story branches).
-                          // Only transient 5xx/timeouts fail OPEN and deliver content.
-                          const isAuthError = followResult.error === 'auth'
-                          if (isAuthError) {
-                            console.warn(`[webhook] ⚠️ DM follower gate auth failure for @${senderId}; sending gate`)
-                            const result = await sendCardDM(user.access_token, { id: senderId }, buildFollowGateCard({ username: user.username, ruleId: match.id, title: "❌ Verification Failed", subtitle: `We can't verify your follow status. Please follow @${user.username} and try again.` }))
-                            const conv = await incomingSaved
-                            if (result?.ok && conv) {
-                              try {
-                                await supabase.from("messages").insert({
-                                  id: `mid_reply_${Date.now()}_${Math.random()}`,
-                                  conversation_id: conv.id,
-                                  user_id: user.id,
-                                  sender_id: user.business_account_id,
-                                  sender_username: user.username,
-                                  content: "[Auth Failure — Gate Sent]",
-                                  is_from_instagram: false,
-                                })
-                              } catch (e) {
-                                console.error("[webhook] Failed to save outgoing message", e)
-                              }
-                            }
-                          } else {
-                            // Transient failure — fail OPEN on initial trigger
-                            console.warn(`[webhook] ⚠️ DM follower gate transient failure for @${senderId}; failing open on initial trigger`)
-                            const result = await sendAutomationResponse(user.access_token, { id: senderId }, content)
-                            const conv = await incomingSaved
-                            if (result?.ok && conv) {
-                              try {
-                                await supabase.from("messages").insert({
-                                  id: `mid_reply_${Date.now()}_${Math.random()}`,
-                                  conversation_id: conv.id,
-                                  user_id: user.id,
-                                  sender_id: user.business_account_id,
-                                  sender_username: user.username,
-                                  content: responsePreviewText(content),
-                                  is_from_instagram: false,
-                                })
-                              } catch (e) {
-                                console.error("[webhook] Failed to save outgoing message", e)
-                              }
                             }
                           }
                         }
