@@ -14,8 +14,10 @@ export function LandingPage() {
   const router = useRouter()
 
   const handleLogin = () => {
-    const redirectUri = process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI || "https://instagram-automation-brown.vercel.app/api/instagram/callback"
-    const loginUrl = `https://www.facebook.com/dialog/oauth?client_id=1491272917394467&config_id=1602487991677280&display=popup&override_default_response_type=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&prompt=login`
+    const redirectUri = process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI || "https://insta-2-0-psi.vercel.app/api/instagram/callback"
+    const clientId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID || "4169116393392766"
+    const configId = process.env.NEXT_PUBLIC_INSTAGRAM_CONFIG_ID || "1169944912135822"
+    const loginUrl = `https://www.facebook.com/dialog/oauth?client_id=${clientId}&config_id=${configId}&display=popup&override_default_response_type=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&prompt=login`
     window.location.href = loginUrl
   }
 

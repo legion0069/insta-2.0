@@ -31,12 +31,9 @@ export async function POST(request: NextRequest) {
     const cleanCode = code.replace(/#_$/, "").trim()
 
     // 1. Env Vars
-    let clientId = process.env.INSTAGRAM_APP_ID || "1491272917394467"
-    if (clientId === "1602487991677280") {
-      clientId = "1491272917394467"
-    }
+    let clientId = process.env.INSTAGRAM_APP_ID || "4169116393392766"
     const clientSecret = process.env.INSTAGRAM_APP_SECRET
-    const redirectUri = process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI || "https://instagram-automation-brown.vercel.app/api/instagram/callback"
+    const redirectUri = process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI || "https://insta-2-0-psi.vercel.app/api/instagram/callback"
 
     if (!clientId || !clientSecret || !redirectUri) {
       throw new Error("Missing Env Vars: Check INSTAGRAM_APP_ID")
