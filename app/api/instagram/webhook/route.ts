@@ -267,7 +267,9 @@ export async function POST(request: NextRequest) {
         .from("users")
         .select("*")
         .or(`business_account_id.eq.${webhookId},page_id.eq.${webhookId}`)
-        .single()
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
 
       if (!user) {
         const candidateIds = new Set<string>()
@@ -287,7 +289,9 @@ export async function POST(request: NextRequest) {
             .from("users")
             .select("*")
             .or(`business_account_id.eq.${candidateId},page_id.eq.${candidateId}`)
-            .single()
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
           if (fallbackUser) {
             await supabase.from("users").update({ page_id: webhookId }).eq("id", fallbackUser.id)
             user = fallbackUser
@@ -297,19 +301,13 @@ export async function POST(request: NextRequest) {
       }
 
       if (!user) {
-        const { data: allUsers } = await supabase.from("users").select("*")
-        if (allUsers && allUsers.length === 1) {
+        const { data: allUsers } = await supabase
+          .from("users")
+          .select("*")
+          .order("updated_at", { ascending: false })
+        if (allUsers && allUsers.length > 0) {
           user = allUsers[0]
-          console.log(`[webhook] Auto-bound webhook to single user ${user.username} (${user.id})`)
-        } else if (allUsers) {
-          for (const candidate of allUsers) {
-            if (!candidate.access_token) continue
-            if (await verifyIdOwnership(candidate.access_token, webhookId)) {
-              await supabase.from("users").update({ page_id: webhookId }).eq("id", candidate.id)
-              user = candidate
-              break
-            }
-          }
+          console.log(`[webhook] Auto-bound webhook to active user ${user.username} (${user.id})`)
         }
       }
 
@@ -318,11 +316,19 @@ export async function POST(request: NextRequest) {
         continue
       }
 
-      const { data: automations } = await supabase
+      let { data: automations } = await supabase
         .from("automations")
         .select("*")
         .eq("user_id", user.id)
         .eq("is_active", true)
+
+      if (!automations || automations.length === 0) {
+        const { data: allActive } = await supabase
+          .from("automations")
+          .select("*")
+          .eq("is_active", true)
+        if (allActive) automations = allActive
+      }
 
       if (!automations?.length) continue
 
