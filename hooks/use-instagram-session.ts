@@ -39,6 +39,22 @@ export function useInstagramSession() {
                         router.replace("/dashboard")
                     } else {
                         console.error("Backend login error:", data.error)
+                        // Fallback: Check if session is already saved in database
+                        try {
+                            const activeRes = await fetch("/api/instagram/active-user")
+                            const activeData = await activeRes.json()
+                            if (activeData.user) {
+                                localStorage.setItem("ig_user_id", activeData.user.userId)
+                                localStorage.setItem("ig_username", activeData.user.username)
+                                setUserId(activeData.user.userId)
+                                setUsername(activeData.user.username)
+                                router.replace("/dashboard")
+                                setIsLoading(false)
+                                return
+                            }
+                        } catch (e) {
+                            console.warn("Fallback active user check failed:", e)
+                        }
                     }
                 } catch (err) {
                     console.error("Login failed:", err)

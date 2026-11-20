@@ -146,10 +146,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Attempt 4: Direct Instagram Professional Account Verification
-    // Ensure tokens for @vamshi__verse are always saved to the Instagram account ID, not a system user ID
+    // Ensure tokens are saved to the Instagram account ID, not a system user ID
+    const targetIgId = process.env.INSTAGRAM_ACCOUNT_ID || "17841419844203978"
     try {
       const igVerify = await fetch(
-        `https://graph.facebook.com/v24.0/17841479501766910?fields=id,username,profile_picture_url&access_token=${accessToken}`
+        `https://graph.facebook.com/v24.0/${targetIgId}?fields=id,username,profile_picture_url&access_token=${accessToken}`
       )
       const igData = await igVerify.json()
       if (igData.id && igData.username) {
@@ -161,13 +162,13 @@ export async function POST(request: NextRequest) {
       console.warn("[v0] IG direct verify check failed:", e)
     }
 
-    const finalUserId = businessAccountId || loginUserId || "17841479501766910"
+    const finalUserId = businessAccountId || loginUserId || targetIgId
 
     // 6. Save/Update User
     const supabase = await getSupabaseServerClient()
 
     // Clean up any accidental system user rows so active-user never desyncs
-    await supabase.from("users").delete().eq("username", "Automation System User")
+    await supabase.from("users").delete().ilike("username", "%System User%")
 
     const updates: any = {
       username,

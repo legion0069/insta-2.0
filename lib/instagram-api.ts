@@ -30,8 +30,9 @@ async function post(path: string, token: string, body: any): Promise<SendResult>
     const isFb = token.startsWith("EAA")
     const baseGraph = isFb ? "https://graph.facebook.com/v24.0" : "https://graph.instagram.com/v24.0"
     let resolvedPath = path
+    const igId = process.env.INSTAGRAM_ACCOUNT_ID || "17841419844203978"
     if (isFb && resolvedPath.startsWith("me/messages")) {
-      resolvedPath = resolvedPath.replace("me/messages", "17841479501766910/messages")
+      resolvedPath = resolvedPath.replace("me/messages", `${igId}/messages`)
     }
 
     const res = await fetch(`${baseGraph}/${resolvedPath}?access_token=${encodeURIComponent(token)}`, {

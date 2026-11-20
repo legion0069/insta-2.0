@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     // 1. Get Access Token
     let { data: user } = await supabase
       .from("users")
-      .select("access_token")
+      .select("access_token, business_account_id")
       .eq("id", userId)
       .single()
 
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     if (!user?.access_token) {
       const { data: fallbackUser } = await supabase
         .from("users")
-        .select("access_token")
+        .select("access_token, business_account_id")
         .not("access_token", "is", null)
         .order("updated_at", { ascending: false })
         .limit(1)
@@ -38,9 +38,10 @@ export async function GET(request: NextRequest) {
 
     // 2. Fetch Media from Meta Graph API
     let metaItems: any[] = []
+    const igId = user.business_account_id || process.env.INSTAGRAM_ACCOUNT_ID || "17841419844203978"
     const isFb = user.access_token.startsWith("EAA")
     const url = isFb
-      ? `https://graph.facebook.com/v24.0/17841479501766910/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=24&access_token=${user.access_token}`
+      ? `https://graph.facebook.com/v24.0/${igId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=24&access_token=${user.access_token}`
       : `https://graph.instagram.com/me/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=24&access_token=${user.access_token}`
 
     try {
