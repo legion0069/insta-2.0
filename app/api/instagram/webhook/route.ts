@@ -672,17 +672,35 @@ export async function POST(request: NextRequest) {
                     const dmAutomations = automations.filter((a: any) => a.trigger_source === "dm" || !a.trigger_source)
                     let match = null
 
-                    const isUnlockEvent = triggerType === "postback" && triggerValue.startsWith("UNLOCK_CONTENT_")
-                    const isStartGate = triggerType === "postback" && triggerValue.startsWith("START_GATE_")
+                    const isUnlockEvent =
+                      (triggerType === "postback" && triggerValue.startsWith("UNLOCK_CONTENT_")) ||
+                      triggerValue.includes("i'm following") ||
+                      triggerValue.includes("im following") ||
+                      triggerValue.includes("i followed")
 
-                    if (triggerType === "postback") {
-                      if (isUnlockEvent) {
+                    const isStartGate =
+                      (triggerType === "postback" && triggerValue.startsWith("START_GATE_")) ||
+                      triggerValue.includes("send me the link") ||
+                      triggerValue.includes("send link")
+
+                    if (isUnlockEvent) {
+                      if (triggerValue.startsWith("UNLOCK_CONTENT_")) {
                         const ruleId = triggerValue.replace("UNLOCK_CONTENT_", "")
                         match = automations.find((a) => a.id === ruleId)
-                      } else if (isStartGate) {
+                      }
+                      if (!match) {
+                        match = automations.find((a) => parseContent(a.response_content).check_follow === true) || automations[0]
+                      }
+                    } else if (isStartGate) {
+                      if (triggerValue.startsWith("START_GATE_")) {
                         const ruleId = triggerValue.replace("START_GATE_", "")
                         match = automations.find((a) => a.id === ruleId)
-                      } else if (triggerValue.startsWith("ICE_BREAKER_")) {
+                      }
+                      if (!match) {
+                        match = automations.find((a) => parseContent(a.response_content).check_follow === true) || automations[0]
+                      }
+                    } else if (triggerType === "postback") {
+                      if (triggerValue.startsWith("ICE_BREAKER_")) {
                         const iceBreakerId = triggerValue.replace("ICE_BREAKER_", "")
                         const { data: ib } = await supabase
                           .from("ice_breakers")
